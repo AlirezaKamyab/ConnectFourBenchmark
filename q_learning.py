@@ -8,10 +8,15 @@ from utils import (
     convert_to_tensor, 
     epsilon_greedy, 
     draw_plot, 
-    final_evaluation
+    final_evaluation,
+    get_model,
+    save_csv_file,
+    linear_epsilon_scheduler
 )
-from models.mlp import MLP
 import os
+from types import SimpleNamespace
+from argparse import ArgumentParser
+import json
 
 
 def q_learning(
@@ -54,17 +59,17 @@ def q_learning(
                 reward *= -1
             next_obs, next_action_mask = convert_to_tensor(next_obs, device=device)
 
-            with torch.no_grad():
-                next_q_values:torch.Tensor = q_network(next_obs)
-                next_action = epsilon_greedy(next_q_values, epsilon=0, action_mask=next_action_mask)
-                max_q = next_q_values[:, next_action]
-
             # Ut should be [B,]
             if not terminated:
+                with torch.no_grad():
+                    next_q_values:torch.Tensor = q_network(next_obs)
+                    next_action = epsilon_greedy(next_q_values, epsilon=0, action_mask=next_action_mask)
+                    max_q = next_q_values[:, next_action]
                 Ut = reward + gamma * max_q
             else:
                 Ut = torch.tensor([reward], dtype=torch.float32, device=device)
                 outcomes.append(reward)
+
             loss = nn.functional.mse_loss(q_values[:, action], Ut)
 
             with torch.no_grad():
@@ -108,27 +113,32 @@ def q_learning(
 
 
 if __name__ == '__main__':
-    DEVICE = 'cuda'
-    experiment_name = "E002_q_learning"
+    parser = ArgumentParser(description="Q-learning")
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
+
+    with open(args.config, 'r') as config_file:
+        config_file = json.load(config_file)
+        config = SimpleNamespace(**config_file)
+
+    DEVICE = config.device
+    experiment_name = config.experiment
     result_path = os.path.join('results', experiment_name)
     os.makedirs(result_path, exist_ok=True)
 
     env = Connect4Env(render_mode="rgb_array", simple_reward=True)
     env.load_openning_book("connect_four_solver/7x6.book")
 
-    runs = 10
-    episodes = 100
-    gamma = 0.99
-    alpha = 0.1
-    epsilon = 0.1
+    runs = config.runs
+    episodes = config.episodes
+    gamma = config.gamma
+    alpha = config.alpha
+    epsilon = config.epsilon
     history = None
 
     for run in range(runs):
-        mlp = MLP(
-            hidden_state=[256, 128, 64],
-            num_actions=7,
-            bias=True
-        ).to(DEVICE)
+        print('\nRun:', run+1)
+        mlp = get_model(config.q_network).to(DEVICE)
         output = q_learning(
             env=env,
             q_network=mlp,
@@ -136,7 +146,8 @@ if __name__ == '__main__':
             gamma=gamma,
             alpha=alpha,
             device=DEVICE,
-            epsilon=epsilon
+            epsilon=epsilon,
+            epsilon_scheduler=linear_epsilon_scheduler(1.0, 0.1, 1000)
         )
 
         if history is None:
@@ -162,15 +173,17 @@ if __name__ == '__main__':
     _, game_lengths = draw_plot(history['game_lengths'], "No. actions per Episode", "episode", "No. actions")
     game_lengths.savefig(os.path.join(result_path, 'game_lengths.jpeg'), dpi=320)
 
+    all_states = np.hstack([history['td_errors'][None, :], history['optimal_move_rates'][None, :], history['game_lengths'][None, :]])
+    save_csv_file(
+        ["td_errors", 'optimal_move_rates', 'game_lengths'], 
+        all_states,
+        os.path.join(result_path, 'states.csv')
+    )
+
     with open(os.path.join(result_path, "win_rates.txt"), 'w') as file:
         print("Configs", file=file)
         print("-"*10, file=file)
-        print("episodes:", episodes, file=file)
-        print("runs:", runs, file=file)
-        print("gamma:", gamma, file=file)
-        print("epsilon:", epsilon, file=file)
-        print("alpha:", alpha, file=file)
-        print(file=file)
+        print(json.dumps(config_file), file=file)
 
 
         print("Train (Red Player) Results", file=file)

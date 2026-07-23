@@ -4,6 +4,8 @@ from torch import nn
 from environment import Connect4Env
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from models.mlp import MLP
+import pandas as pd
 
 
 def epsilon_greedy(values:torch.Tensor, epsilon:float, action_mask:np.ndarray=None, batch:bool=False):
@@ -65,6 +67,32 @@ def draw_plot(
     return ax, fig
 
 
+def get_model(config:dict):
+    model_type = config.get("type")
+    assert model_type is not None, "Config file is corrupted. There is no type for the model"
+
+    if model_type.lower() == 'mlp':
+        model = MLP(
+            in_features=84,
+            hidden_state=config['hidden_states'],
+            bias=config.get("bias", True),
+            activation_function=config.get("activation", "relu"),
+            num_actions=7
+        )
+        return model
+
+    raise ValueError("This model has not been defined")
+
+
+def save_csv_file(column_names:list, array:np.ndarray, path:str):
+    values = {
+        column_names[i]:array[:, i]
+        for i in range(len(column_names))
+    }
+    df = pd.DataFrame(values)
+    df.to_csv(path, index=False)
+
+
 @torch.no_grad()
 def final_evaluation(
     env: Connect4Env,
@@ -115,4 +143,3 @@ def final_evaluation(
         "draw_rate":draw_rate,
         "lose_rate":lose_rate
     }
-        

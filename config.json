@@ -1,0 +1,17 @@
+{
+    "experiment":"test",
+    "description":"",
+    "episodes":1000,
+    "runs":100,
+    "alpha":0.1,
+    "epsilon":0.1,
+    "gamma":0.99,
+    "device":"cuda",
+
+    "q_network": {
+        "type":"mlp",
+        "hidden_states":[256, 128, 64],
+        "activation":"relu",
+        "bias": true
+    }
+}
