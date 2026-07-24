@@ -1,0 +1,24 @@
+{
+    "experiment":"E004_q_learning",
+    "description":"",
+    "episodes":1000,
+    "runs":100,
+    "alpha":0.1,
+    "epsilon":0.1,
+    "gamma":0.99,
+    "device":"cuda",
+
+    "q_network": {
+        "type":"cnn",
+        "channels":[32, 64, 128],
+        "kernels":[3, 3, 3],
+        "activation":"relu",
+        "bias": true
+    },
+    "epsilon_scheduler": {
+        "type":"linear",
+        "minimum":0.1,
+        "maximum":1.0,
+        "episodes":500
+    }
+}
