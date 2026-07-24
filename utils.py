@@ -1,14 +1,21 @@
-import torch
-import numpy as np
-from torch import nn
-from environment import Connect4Env
-from tqdm import tqdm
 import matplotlib.pyplot as plt
-from models.mlp import MLP
+import numpy as np
 import pandas as pd
+import torch
+from torch import nn
+from tqdm import tqdm
+
+from environment import Connect4Env
+from models.cnn import CNN
+from models.mlp import MLP
 
 
-def epsilon_greedy(values:torch.Tensor, epsilon:float, action_mask:np.ndarray=None, batch:bool=False):
+def epsilon_greedy(
+    values: torch.Tensor,
+    epsilon: float,
+    action_mask: np.ndarray = None,
+    batch: bool = False,
+):
     values = values.detach().cpu().numpy()
 
     if action_mask is not None:
@@ -24,42 +31,37 @@ def epsilon_greedy(values:torch.Tensor, epsilon:float, action_mask:np.ndarray=No
     mask = np.random.choice([0, 1], p=(epsilon, 1 - epsilon), size=(batch_size,))
     actions = greedy * mask + random * (1 - mask)
 
-    if batch: return actions
-    else: return actions[0]
+    if batch:
+        return actions
+    else:
+        return actions[0]
 
 
-def convert_to_tensor(obs:dict, device:str='cpu'):
-    obs, action_mask = obs['observation'], obs['action_mask']
+def convert_to_tensor(obs: dict, device: str = "cpu"):
+    obs, action_mask = obs["observation"], obs["action_mask"]
     tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
     tensor = tensor.to(device)
     return tensor, action_mask
 
 
-def linear_epsilon_scheduler(
-    maximum:float,
-    minimum:float,
-    num_steps:int
-):
+def linear_epsilon_scheduler(maximum: float, minimum: float, num_steps: int):
     slope = (minimum - maximum) / num_steps
-    def get_epsilon(step:int):
+
+    def get_epsilon(step: int):
         new_epsilon = slope * step + maximum
         new_epsilon = max(minimum, new_epsilon)
         return new_epsilon
+
     return get_epsilon
 
 
-def draw_plot(
-    values:np.ndarray,
-    title:str,
-    x_label:str,
-    y_label:str
-):
+def draw_plot(values: np.ndarray, title: str, x_label: str, y_label: str):
     fig = plt.figure()
     ax = plt.subplot(111)
     ax.plot(values)
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    ax.set_title(title, fontdict={'fontsize':16, 'fontweight':800})
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
+    ax.set_title(title, fontdict={"fontsize": 16, "fontweight": 800})
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
     ax.grid("#eee")
@@ -67,38 +69,63 @@ def draw_plot(
     return ax, fig
 
 
-def get_model(config:dict):
+def get_model(config: dict):
     model_type = config.get("type")
-    assert model_type is not None, "Config file is corrupted. There is no type for the model"
+    assert (
+        model_type is not None
+    ), "Config file is corrupted. There is no type for the model"
 
-    if model_type.lower() == 'mlp':
+    if model_type.lower() == "mlp":
         model = MLP(
             in_features=84,
-            hidden_state=config['hidden_states'],
+            hidden_state=config["hidden_states"],
             bias=config.get("bias", True),
             activation_function=config.get("activation", "relu"),
-            num_actions=7
+            num_actions=7,
         )
         return model
 
-    raise ValueError("This model has not been defined")
+    elif model_type.lower() == "cnn":
+        model = CNN(
+            in_channels=2,
+            channels=config["channels"],
+            kernels=config["kernels"],
+            num_actions=7,
+            bias=config.get("bias", True),
+            activation_function=config.get("activation", "relu"),
+        )
+        return model
+
+    raise ValueError(f"The model={model_type} has not been defined")
 
 
-def save_csv_file(column_names:list, array:np.ndarray, path:str):
-    values = {
-        column_names[i]:array[:, i]
-        for i in range(len(column_names))
-    }
+def get_epsilon_scheduler(config: dict):
+    if config is None:
+        return None
+    scheduler_type = config.get("type", None)
+    if scheduler_type is None:
+        return None
+
+    if scheduler_type.lower() == "linear":
+        func = linear_epsilon_scheduler(
+            maximum=config.get("maximum", 1.0),
+            minimum=config.get("minimum", 0.1),
+            num_steps=config.get("steps", 500),
+        )
+        return func
+
+    raise ValueError("This scheduler has not been defined")
+
+
+def save_csv_file(column_names: list, array: np.ndarray, path: str):
+    values = {column_names[i]: array[:, i] for i in range(len(column_names))}
     df = pd.DataFrame(values)
     df.to_csv(path, index=False)
 
 
 @torch.no_grad()
 def final_evaluation(
-    env: Connect4Env,
-    model:nn.Module,
-    runs:int=1,
-    device:str='cuda'
+    env: Connect4Env, model: nn.Module, runs: int = 1, device: str = "cuda"
 ):
     model.eval()
     optimal_rates = []
@@ -111,11 +138,7 @@ def final_evaluation(
         terminated = False
         while not terminated:
             values = model(state)
-            action = epsilon_greedy(
-                values=values,
-                epsilon=0.0,
-                action_mask=action_mask
-            )
+            action = epsilon_greedy(values=values, epsilon=0.0, action_mask=action_mask)
             if action in env.get_all_best_actions():
                 best_moves += 1
             total_moves += 1
@@ -137,9 +160,9 @@ def final_evaluation(
     lose_rate = np.sum(wdl == -1) / wdl.shape[0]
 
     return {
-        "wdl":wdl,
-        "mean_optimal_rate":optimal_rates.mean(),
-        "win_rate":win_rate,
-        "draw_rate":draw_rate,
-        "lose_rate":lose_rate
+        "wdl": wdl,
+        "mean_optimal_rate": optimal_rates.mean(),
+        "win_rate": win_rate,
+        "draw_rate": draw_rate,
+        "lose_rate": lose_rate,
     }
