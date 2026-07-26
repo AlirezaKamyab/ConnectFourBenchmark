@@ -1,17 +1,23 @@
 {
-    "experiment":"E004_q_learning",
+    "experiment":"E005_q_learning_ER",
     "description":"",
-    "episodes":1000,
+    "num_steps":1000000,
     "runs":100,
-    "alpha":0.1,
+    "alpha":0.001,
     "epsilon":0.1,
     "gamma":0.99,
     "device":"cuda",
 
+    "batch_size":64,
+    "min_buffer_size":10000,
+    "max_buffer_size":1000000,
+
+    "log_dir": "logs/E006",
+    "play_each_n_steps": 10000,
+
     "q_network": {
-        "type":"cnn",
-        "channels":[32, 64, 128],
-        "kernels":[3, 3, 3],
+        "type":"mlp",
+        "hidden_states":[512, 256],
         "activation":"relu",
         "bias": true
     },
@@ -19,6 +25,6 @@
         "type":"linear",
         "minimum":0.1,
         "maximum":1.0,
-        "episodes":500
+        "steps":50000
     }
 }

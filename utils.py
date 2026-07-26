@@ -13,13 +13,13 @@ from models.mlp import MLP
 def epsilon_greedy(
     values: torch.Tensor,
     epsilon: float,
-    action_mask: np.ndarray = None,
-    batch: bool = False,
+    action_mask: np.ndarray = None
 ):
     values = values.detach().cpu().numpy()
+    action_mask = action_mask.reshape(-1, 7)
 
     if action_mask is not None:
-        actions = np.argwhere(action_mask == 1)[:, 0]
+        actions = np.argwhere(action_mask == 1)
     else:
         actions = int(values.shape[-1])
 
@@ -27,14 +27,15 @@ def epsilon_greedy(
 
     batch_size = values.shape[0]
     greedy = np.argmax(values, axis=1)
-    random = np.random.choice(actions, size=(batch_size,))
+    if not isinstance(actions, int):
+        random = [np.random.choice(actions[actions[:, 0] == b][:, 1]) for b in range(batch_size)]
+        random = np.array(random)
+    else:
+        random = np.random.choice(actions, size=(batch_size,))
     mask = np.random.choice([0, 1], p=(epsilon, 1 - epsilon), size=(batch_size,))
     actions = greedy * mask + random * (1 - mask)
 
-    if batch:
-        return actions
-    else:
-        return actions[0]
+    return actions
 
 
 def convert_to_tensor(obs: dict, device: str = "cpu"):
@@ -123,6 +124,39 @@ def save_csv_file(column_names: list, array: np.ndarray, path: str):
     df.to_csv(path, index=False)
 
 
+@torch.no_grad
+def play_a_game(
+    env: Connect4Env, model: nn.Module, device: str = "cuda"
+):
+    model.eval()
+
+    state = env.reset()
+    state, action_mask = convert_to_tensor(state, device=device)
+    frames = [env.render()]
+
+    best_moves = 0
+    total_moves = 0
+    terminated = False
+    while not terminated:
+        values = model(state)
+        action = epsilon_greedy(values=values, epsilon=0.0, action_mask=action_mask)[0]
+        if action in env.get_all_best_actions():
+            best_moves += 1
+        total_moves += 1
+
+        state, reward, terminated, _, _ = env.step(action)
+        frames.append(env.render())
+        state, action_mask = convert_to_tensor(state, device=device)
+
+    optimal_rate = best_moves / total_moves
+
+    return {
+        "mean_optimal_rate": optimal_rate,
+        "outcome": reward,
+        "frames":frames
+    }
+
+
 @torch.no_grad()
 def final_evaluation(
     env: Connect4Env, model: nn.Module, runs: int = 1, device: str = "cuda"
@@ -166,3 +200,15 @@ def final_evaluation(
         "draw_rate": draw_rate,
         "lose_rate": lose_rate,
     }
+
+
+def compute_grad_norm(model:nn.Module, norm_type:float=2.0):
+    total = 0
+    for param in model.parameters():
+        if not param.requires_grad:
+            continue
+
+        total += param.grad.norm(norm_type).mean()
+
+    total = total ** (1 / norm_type)
+    return total
