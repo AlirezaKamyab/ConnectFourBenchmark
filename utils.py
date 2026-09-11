@@ -28,7 +28,13 @@ def epsilon_greedy(
     batch_size = values.shape[0]
     greedy = np.argmax(values, axis=1)
     if not isinstance(actions, int):
-        random = [np.random.choice(actions[actions[:, 0] == b][:, 1]) for b in range(batch_size)]
+        random = []
+        for b in range(batch_size):
+            valid_actions = actions[actions[:, 0] == b][:, 1]
+            if len(valid_actions) == 0: 
+                random.append(0)
+            else:
+                random.append(np.random.choice(valid_actions))
         random = np.array(random)
     else:
         random = np.random.choice(actions, size=(batch_size,))
@@ -144,7 +150,13 @@ def play_a_game(
             best_moves += 1
         total_moves += 1
 
-        state, reward, terminated, _, _ = env.step(action)
+        state, reward, terminated = env.step(action)['player_0']
+        frames.append(env.render())
+        state, action_mask = convert_to_tensor(state, device=device)
+
+        # opponent's turn
+        mini_max_action = env.predict_best_move()
+        state, reward, terminated = env.step(mini_max_action)['player_0']
         frames.append(env.render())
         state, action_mask = convert_to_tensor(state, device=device)
 

@@ -33,10 +33,10 @@ if __name__ == "__main__":
     result_path = os.path.join("results", experiment_name)
     os.makedirs(result_path, exist_ok=True)
 
-    env = Connect4Env(simple_reward=True)
+    env = Connect4Env(epsilon=0.1)
     env.load_openning_book("connect_four_solver/7x6.book")
 
-    game_env = Connect4Env(render_mode='rgb_array', simple_reward=True)
+    game_env = Connect4Env(render_mode='rgb_array')
     game_env.load_openning_book("connect_four_solver/7x6.book")
 
     runs = config.runs
@@ -50,6 +50,7 @@ if __name__ == "__main__":
     max_buffer_size = config.max_buffer_size
     log_dir = config.log_dir
     play_each_n_steps = config.play_each_n_steps
+    steps_to_swap_target = config.steps_to_swap_target
     history = None
 
     for run in range(runs):
@@ -60,35 +61,56 @@ if __name__ == "__main__":
             gamma=gamma,
             alpha=alpha,
             log_dir=log_dir,
+            steps_to_swap_target=steps_to_swap_target,
             device=DEVICE
         )
         outcomes = []
         terminated = True
+        first_move = True
         while q_learning.global_steps < num_steps:
             epsilon = epsilon_scheduler(q_learning.global_steps)
             print(f"\rSteps: {q_learning.global_steps:>5} Buffer: {len(buffer)} epsilon: {epsilon:.2e}", end='')
             if terminated:
-                state, mask_actions = convert_to_tensor(env.reset(), device=DEVICE)
+                state, action_mask = convert_to_tensor(env.reset(), device=DEVICE)
                 terminated = False
+                first_move = True
 
             values = model(state)
+            if first_move:
+                q_learning.logger.add_scalar(
+                    'first_move_expectation', 
+                    values.detach().cpu().max().item(), 
+                    global_step=q_learning.global_steps)
+
             action = epsilon_greedy(
                 values=values,
                 epsilon=epsilon,
-                action_mask=mask_actions
+                action_mask=action_mask
             )[0]
-            next_state, reward, terminated, _, _ = env.step(action)
-            next_state, next_action_mask = convert_to_tensor(next_state, device=DEVICE)
+            after_state, reward, terminated = env.step(action)['player_0']
+            first_move = False
+            after_state, action_mask = convert_to_tensor(after_state, device=DEVICE)
+
+            if not terminated:
+                mini_max_action = env.predict_best_move()
+                next_state, next_reward, terminated = env.step(mini_max_action)['player_0']
+                next_state, action_mask = convert_to_tensor(next_state, device=DEVICE)
+            else:
+                next_state = after_state
+                next_reward = 0
+
+            reward = next_reward + reward
+
             buffer.add_experience(
                 state=state,
                 action=action,
                 next_state=next_state,
-                next_action_mask=next_action_mask,
+                next_action_mask=action_mask,
                 reward=reward,
                 terminated=terminated
             )
+            
             state = next_state
-            mask_actions = next_action_mask
 
             if len(buffer) >= min_buffer_size:
                 batch = buffer.sample(batch_size)
@@ -108,3 +130,5 @@ if __name__ == "__main__":
                     frames = np.stack(frames)
                     frames = frames.astype(np.uint8).transpose(0, 3, 1, 2)[None, ...]
                     q_learning.logger.add_video("game", frames, global_step=q_learning.global_steps // play_each_n_steps, fps=1)
+                    q_learning.logger.flush()
+                    torch.save(model, os.path.join(result_path, 'model.pt'))

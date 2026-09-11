@@ -1,30 +1,37 @@
 {
-    "experiment":"E005_q_learning_ER",
+    "experiment":"E004-CNN",
     "description":"",
     "num_steps":1000000,
-    "runs":100,
-    "alpha":0.001,
+    "runs":1,
+    "alpha":3e-4,
     "epsilon":0.1,
     "gamma":0.99,
     "device":"cuda",
 
-    "batch_size":64,
-    "min_buffer_size":10000,
-    "max_buffer_size":1000000,
+    "batch_size":1,
+    "min_buffer_size":1,
+    "max_buffer_size":1,
 
-    "log_dir": "logs/E006",
-    "play_each_n_steps": 10000,
+    "log_dir": "logs/E002",
+    "play_each_n_steps": 5000,
+    "steps_to_swap_target":1000,
 
     "q_network": {
         "type":"mlp",
-        "hidden_states":[512, 256],
+        "hidden_states":[84, 256, 256],
         "activation":"relu",
         "bias": true
     },
     "epsilon_scheduler": {
+        "type": "linear",
+        "maximum": 1.0,
+        "minimum": 0.05,
+        "steps": 1000000
+    },
+    "env_epsilon_scheduler": {
         "type":"linear",
-        "minimum":0.1,
+        "minimum":0.5,
         "maximum":1.0,
-        "steps":50000
+        "steps":200000
     }
 }
