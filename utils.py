@@ -10,31 +10,61 @@ from models.cnn import CNN
 from models.mlp import MLP
 
 
+class SharedAdam(torch.optim.Adam):
+    def __init__(self, params, lr=3e-3, betas=(0.9, 0.999), eps=1e-9, weight_decay=0.0):
+        super(SharedAdam, self).__init__(params=params, lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+
+        for param_group in self.param_groups:
+            for p in param_group['params']:
+                state = self.state[p]
+                state['step'] = torch.tensor(0.0)
+                state['exp_avg'] = torch.zeros_like(p)
+                state['exp_avg_sq'] = torch.zeros_like(p)
+
+                state['exp_avg'].share_memory_()
+                state['exp_avg_sq'].share_memory_()
+                state['step'].share_memory_()
+
+
 def epsilon_greedy(
     values: torch.Tensor,
     epsilon: float,
-    action_mask: np.ndarray = None,
-    batch: bool = False,
+    action_mask: np.ndarray = None
 ):
-    values = values.detach().cpu().numpy()
+    # Ensure 2D tensor/array shape [batch_size, num_actions]
+    if isinstance(values, torch.Tensor):
+        values = values.detach().cpu().numpy()
+    
+    if values.ndim == 1:
+        values = values.reshape(1, -1)
+        
+    batch_size, num_actions = values.shape
 
     if action_mask is not None:
-        actions = np.argwhere(action_mask == 1)[:, 0]
+        action_mask = np.array(action_mask, dtype=np.float32).reshape(batch_size, num_actions)
+        # Apply mask: set invalid actions to a large negative number
+        masked_values = np.where(action_mask == 1, values, -1e9)
     else:
-        actions = int(values.shape[-1])
+        action_mask = np.ones((batch_size, num_actions))
+        masked_values = values
 
-    values = values * action_mask + np.ones_like(values) * -1000 * (1 - action_mask)
+    actions = []
+    for b in range(batch_size):
+        valid_actions = np.where(action_mask[b] == 1)[0]
+        if len(valid_actions) == 0:
+            # Fallback if state is terminal/empty
+            actions.append(0)
+            continue
 
-    batch_size = values.shape[0]
-    greedy = np.argmax(values, axis=1)
-    random = np.random.choice(actions, size=(batch_size,))
-    mask = np.random.choice([0, 1], p=(epsilon, 1 - epsilon), size=(batch_size,))
-    actions = greedy * mask + random * (1 - mask)
+        if np.random.rand() < epsilon:
+            # Random valid action
+            action = np.random.choice(valid_actions)
+        else:
+            # Best valid action
+            action = valid_actions[np.argmax(masked_values[b, valid_actions])]
+        actions.append(action)
 
-    if batch:
-        return actions
-    else:
-        return actions[0]
+    return np.array(actions)
 
 
 def convert_to_tensor(obs: dict, device: str = "cpu"):
@@ -123,6 +153,45 @@ def save_csv_file(column_names: list, array: np.ndarray, path: str):
     df.to_csv(path, index=False)
 
 
+@torch.no_grad
+def play_a_game(
+    env: Connect4Env, model: nn.Module, device: str = "cuda"
+):
+    model.eval()
+
+    state = env.reset()
+    state, action_mask = convert_to_tensor(state, device=device)
+    frames = [env.render()]
+
+    best_moves = 0
+    total_moves = 0
+    terminated = False
+    while not terminated:
+        values = model(state)
+        action = epsilon_greedy(values=values, epsilon=0.0, action_mask=action_mask)[0]
+        if action in env.get_all_best_actions():
+            best_moves += 1
+        total_moves += 1
+
+        state, reward, terminated = env.step(action)['player_0']
+        frames.append(env.render())
+        state, action_mask = convert_to_tensor(state, device=device)
+
+        # opponent's turn
+        mini_max_action = env.predict_best_move()
+        state, reward, terminated = env.step(mini_max_action)['player_0']
+        frames.append(env.render())
+        state, action_mask = convert_to_tensor(state, device=device)
+
+    optimal_rate = best_moves / total_moves
+
+    return {
+        "mean_optimal_rate": optimal_rate,
+        "outcome": reward,
+        "frames":frames
+    }
+
+
 @torch.no_grad()
 def final_evaluation(
     env: Connect4Env, model: nn.Module, runs: int = 1, device: str = "cuda"
@@ -166,3 +235,15 @@ def final_evaluation(
         "draw_rate": draw_rate,
         "lose_rate": lose_rate,
     }
+
+
+def compute_grad_norm(model:nn.Module, norm_type:float=2.0):
+    total = 0
+    for param in model.parameters():
+        if not param.requires_grad:
+            continue
+
+        total += param.grad.norm(norm_type).mean()
+
+    total = total ** (1 / norm_type)
+    return total
