@@ -4,6 +4,7 @@ from torch.optim import Adam
 
 from utils import epsilon_greedy, compute_grad_norm
 from torch.utils.tensorboard import SummaryWriter
+from copy import deepcopy
 
 
 class Q_Learning:
@@ -13,7 +14,8 @@ class Q_Learning:
         gamma: float,
         alpha: float = 0.1,
         device: str = "cpu",
-        log_dir:str=None
+        log_dir:str=None,
+        steps_to_swap_target:int=None
     ):
         self.q_network = q_network
         self.gamma = gamma
@@ -25,6 +27,11 @@ class Q_Learning:
 
         if log_dir is not None:
             self.logger = SummaryWriter(log_dir=log_dir)
+
+        self.target_network = deepcopy(q_network)
+        self.target_network.eval()
+        self.target_network.requires_grad_(False)
+        self.steps_to_swap_target = steps_to_swap_target
 
 
     def step(
@@ -40,7 +47,7 @@ class Q_Learning:
         q_values = self.q_network(state)
         q_values = torch.gather(q_values, 1, index=action)
         with torch.no_grad():
-            next_q_values = self.q_network(next_state)
+            next_q_values = self.target_network(next_state)
             next_actions = epsilon_greedy(
                 next_q_values, 
                 epsilon=0, 
@@ -54,8 +61,9 @@ class Q_Learning:
             if self.logger:
                 self.logger.add_scalar("train/td_error", td_error.cpu().abs().mean().item(), self.global_steps)
 
-        loss = nn.functional.mse_loss(q_values, Ut)
+        loss = nn.functional.smooth_l1_loss(q_values, Ut)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
         self.sgd.step()
 
         if self.logger:
@@ -64,6 +72,11 @@ class Q_Learning:
 
         self.sgd.zero_grad()
         self.global_steps += 1
+
+        if self.steps_to_swap_target > 1 and self.global_steps % self.steps_to_swap_target == 0:
+            self.target_network.load_state_dict(
+                self.q_network.state_dict()
+            )
 
 
 if __name__ == '__main__':
