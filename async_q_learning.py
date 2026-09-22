@@ -12,6 +12,7 @@ PLAYER_1 = 'player_1'
 def worker(
     worker_id:int,
     steps:torch.Tensor,
+    steps_to_swap:torch.Tensor,
     model_config:dict,
     global_q_network:nn.Module,
     global_target_network:nn.Module,
@@ -34,7 +35,7 @@ def worker(
         terminated = False
         episode_rewards = 0
 
-        first_value = local_net(state).max().detach().item()
+        first_value = local_net(state).detach().tolist()
 
         while not terminated:
             rewards, state_values = [], []
@@ -64,6 +65,7 @@ def worker(
                 if terminated:
                     break
                 steps.add_(1)
+                steps_to_swap.subtract_(1)
 
             with torch.no_grad():
                 if not terminated:
@@ -84,7 +86,7 @@ def worker(
             local_net.zero_grad()
             td_error.backward()
 
-            torch.nn.utils.clip_grad_norm_(local_net.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(local_net.parameters(), 10)
 
             for local_param, global_param in zip(local_net.parameters(), global_q_network.parameters()):
                 global_param.grad = local_param.grad
@@ -93,17 +95,14 @@ def worker(
             local_net.load_state_dict(global_q_network.state_dict())
 
             # might not run because it might never see 1000 and skip it
-            if steps % 1000 == 0:
+            if steps_to_swap < 0:
                 global_target_network.load_state_dict(global_q_network.state_dict())
+                steps_to_swap.fill_(10000)
+                print("Target updated")
 
         if episode % 100 == 0:
-            print({
-                'worker_id':worker_id,
-                'episode':episode,
-                'episode_reward':episode_rewards,
-                'steps':steps.item(),
-                'td-error':td_error.detach().cpu().item(),
-                'v_0':first_value
-            })
+            loss = td_error.detach().cpu().item()
+            first_value = [round(x, 2) for x in first_value[0]]
+            print(f"worker {worker_id:>2} | episode {episode:>4} | loss: {loss:>4.4e} | Q0: {str(first_value)}")
             
 

@@ -52,6 +52,8 @@ if __name__ == "__main__":
 
     steps = torch.tensor(0, dtype=torch.int32)
     steps.share_memory_()
+    steps_to_swap = torch.tensor(0, dtype=torch.int32)
+    steps_to_swap.share_memory_()
     history = None
 
     optimizer = SharedAdam(model.parameters(), lr=1e-4)
@@ -65,6 +67,7 @@ if __name__ == "__main__":
             args=(
                 worker_id,
                 steps,
+                steps_to_swap,
                 config.q_network,
                 model,
                 target,
@@ -72,7 +75,7 @@ if __name__ == "__main__":
                 epsilons[worker_id],
                 10000,
                 0.99,
-                10
+                5
             )
         )
 

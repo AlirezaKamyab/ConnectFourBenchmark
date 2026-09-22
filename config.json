@@ -18,7 +18,7 @@
 
     "q_network": {
         "type":"mlp",
-        "hidden_states":[84, 256, 256],
+        "hidden_states":[84, 128, 128],
         "activation":"relu",
         "bias": true
     },
