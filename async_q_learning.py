@@ -74,7 +74,7 @@ def worker(
             returns = []
             for r in reversed(rewards):
                 R = r + gamma * R
-                returns.append(R)
+                returns.insert(0, R)
 
             returns = torch.tensor(returns).unsqueeze(1).to(DEVICE)
             state_values = torch.concat(state_values, dim=0).to(DEVICE)
@@ -92,8 +92,9 @@ def worker(
             optimizer.step()
             local_net.load_state_dict(global_q_network.state_dict())
 
+            # might not run because it might never see 1000 and skip it
             if steps % 1000 == 0:
-                global_target_network.load_state_dict(global_target_network.state_dict())
+                global_target_network.load_state_dict(global_q_network.state_dict())
 
         if episode % 100 == 0:
             print({
