@@ -7,7 +7,9 @@ from tqdm import tqdm
 
 from environment import Connect4Env
 from models.cnn import CNN
+from models.cnn_actor import ActorCriticCNN
 from models.mlp import MLP
+from models.mlp_actor import ActorMLP, ActorCriticMLP
 
 
 class SharedAdam(torch.optim.Adam):
@@ -24,6 +26,48 @@ class SharedAdam(torch.optim.Adam):
                 state['exp_avg'].share_memory_()
                 state['exp_avg_sq'].share_memory_()
                 state['step'].share_memory_()
+
+import torch
+import torch.optim as optim
+
+class SharedRMSprop(optim.RMSprop):
+    def __init__(
+        self, 
+        params, 
+        lr: float = 1e-4, 
+        alpha: float = 0.99, 
+        eps: float = 1e-5, 
+        weight_decay: float = 0.0, 
+        momentum: float = 0.0, 
+        centered: bool = False
+    ):
+        super(SharedRMSprop, self).__init__(
+            params, 
+            lr=lr, 
+            alpha=alpha, 
+            eps=eps, 
+            weight_decay=weight_decay, 
+            momentum=momentum, 
+            centered=centered
+        )
+
+        # Pre-allocate optimizer states and move them to shared memory
+        for group in self.param_groups:
+            for p in group['params']:
+                state = self.state[p]
+                state['step'] = torch.zeros(1)
+                state['square_avg'] = torch.zeros_like(p.data)
+                
+                state['step'].share_memory_()
+                state['square_avg'].share_memory_()
+
+                if momentum > 0:
+                    state['momentum_buffer'] = torch.zeros_like(p.data)
+                    state['momentum_buffer'].share_memory_()
+
+                if centered:
+                    state['grad_avg'] = torch.zeros_like(p.data)
+                    state['grad_avg'].share_memory_()
 
 
 def epsilon_greedy(
@@ -111,16 +155,58 @@ def get_model(config: dict):
             hidden_state=config["hidden_states"],
             bias=config.get("bias", True),
             activation_function=config.get("activation", "relu"),
-            num_actions=7,
+            num_actions=config.get("num_actions", None),
         )
         return model
 
+    elif model_type.lower() == 'actor_mlp':
+        model = ActorMLP(
+            in_features=84,
+            hidden_state=config["hidden_states"],
+            bias=config.get("bias", True),
+            activation_function=config.get("activation", "relu"),
+            num_actions=config.get("num_actions", None),
+        )
+        return model
+
+    elif model_type.lower() == 'actor_critic_mlp':
+        model = ActorCriticMLP(
+            in_features=84,
+            hidden_state=config["hidden_states"],
+            bias=config.get("bias", True),
+            activation_function=config.get("activation", "relu"),
+            num_actions=config.get("num_actions", None),
+        )
+        return model
+    
     elif model_type.lower() == "cnn":
         model = CNN(
             in_channels=2,
             channels=config["channels"],
             kernels=config["kernels"],
-            num_actions=7,
+            num_actions=config.get("num_actions", None),
+            bias=config.get("bias", True),
+            activation_function=config.get("activation", "relu"),
+        )
+        return model
+
+    elif model_type.lower() == "actor_cnn":
+        model = CNN(
+            in_channels=2,
+            channels=config["channels"],
+            kernels=config["kernels"],
+            num_actions=config.get("num_actions", None),
+            bias=config.get("bias", True),
+            activation_function=config.get("activation", "relu"),
+        )
+        return model
+
+    elif model_type.lower() == "actor_critic_cnn":
+        model = ActorCriticCNN(
+            in_channels=2,
+            channels=config["channels"],
+            kernels=config["kernels"],
+            num_actions=config.get("num_actions", None),
             bias=config.get("bias", True),
             activation_function=config.get("activation", "relu"),
         )
@@ -213,6 +299,66 @@ def final_evaluation(
             total_moves += 1
             state, reward, terminated, _, _ = env.step(action)
             state, action_mask = convert_to_tensor(state, device=device)
+
+        if reward > 0:
+            wdl.append(1)
+        elif reward < 0:
+            wdl.append(-1)
+        else:
+            wdl.append(0)
+        optimal_rates.append(best_moves / total_moves)
+
+    wdl = np.array(wdl, dtype=np.float32)
+    optimal_rates = np.array(optimal_rates, dtype=np.float32)
+    win_rate = np.sum(wdl == 1) / wdl.shape[0]
+    draw_rate = np.sum(wdl == 0) / wdl.shape[0]
+    lose_rate = np.sum(wdl == -1) / wdl.shape[0]
+
+    return {
+        "wdl": wdl,
+        "mean_optimal_rate": optimal_rates.mean(),
+        "win_rate": win_rate,
+        "draw_rate": draw_rate,
+        "lose_rate": lose_rate,
+    }
+
+
+@torch.no_grad()
+def final_evaluation_actor(
+    env: Connect4Env, model: nn.Module, runs: int = 1, device: str = "cpu"
+):
+    model.eval()
+    optimal_rates = []
+    wdl = []
+    for _ in tqdm(range(runs)):
+        state = env.reset()
+        state, action_mask = convert_to_tensor(state, device=device)
+        best_moves = 0
+        total_moves = 0
+        terminated = False
+        while not terminated:
+            logits, _ = model(state)
+
+            # prepare mask
+            action_mask = torch.tensor(action_mask, dtype=torch.bool)
+            action_mask = ~action_mask
+
+            # mask the logits
+            masked_logits = logits.masked_fill(action_mask, -torch.inf)
+            probs = torch.nn.functional.softmax(masked_logits, dim=-1)
+            dist = torch.distributions.Categorical(probs=probs)
+            action = dist.sample().detach().item()
+
+            if action in env.get_all_best_actions():
+                best_moves += 1
+            total_moves += 1
+            state, reward, terminated = env.step(action)['player_0']
+            state, action_mask = convert_to_tensor(state, device=device)
+
+            state, next_reward, terminated = env.step(env.predict_best_move())['player_0']
+            state, action_mask = convert_to_tensor(state, device=device)
+
+            reward = reward + next_reward
 
         if reward > 0:
             wdl.append(1)
