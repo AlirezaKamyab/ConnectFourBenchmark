@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 
 
-class CNN(nn.Module):
+class ActorCriticCNN(nn.Module):
     def __init__(
         self,
         in_channels: int,
@@ -13,7 +13,7 @@ class CNN(nn.Module):
         bias: bool = False,
         activation_function: str = "relu",
     ):
-        super(CNN, self).__init__()
+        super(ActorCriticCNN, self).__init__()
 
         if activation_function == "gelu":
             act = nn.GELU()
@@ -28,8 +28,6 @@ class CNN(nn.Module):
         kernels = [None] + kernels
         self.layers = nn.ModuleList()
         self.act = act
-
-        num_actions = num_actions if num_actions is not None else 1
 
         for i in range(1, len(self.channels)):
             self.layers.append(
@@ -46,9 +44,19 @@ class CNN(nn.Module):
             )
 
         # self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.linear = nn.Linear(
+        self.actor = nn.Linear(
             in_features=self.channels[-1] * 42, out_features=num_actions, bias=bias
         )
+        self.critic = nn.Linear(self.channels[-1] * 42, 1)
+
+        for layer in self.layers:
+            if hasattr(layer, 'weight'):
+                layer.weight.data.mul_(0.01)
+            if hasattr(layer, 'bias'):
+                layer.bias.data.fill_(0.0)
+
+        self.actor.weight.data.mul_(0.01)
+        self.actor.bias.data.fill_(0.0)
 
     def forward(self, x: torch.Tensor):
         x = x.permute(0, 3, 1, 2)
@@ -57,9 +65,9 @@ class CNN(nn.Module):
 
         # x = self.avg_pool(x)
         x = x.flatten(start_dim=1)
-        x = self.linear(x)
-        x = torch.nn.functional.tanh(x)
-        return x
+        actor_output = self.actor(x)
+        critic_output = self.critic(x)
+        return actor_output, critic_output
 
 
 if __name__ == "__main__":

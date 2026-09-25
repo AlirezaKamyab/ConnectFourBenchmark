@@ -41,4 +41,5 @@ class MLP(nn.Module):
         x = x.reshape(batch_size, -1)
         for layer in self.layers:
             x = layer(x)
+
         return x
