@@ -123,10 +123,10 @@ def worker(
 
             critic_loss = advantages.square().mean()
             actor_loss = -(advantages.detach() * log_probs).mean() - entropy_coef * entropies.mean()
-            loss = actor_loss + critic_loss
+            loss = actor_loss + 0.1 * critic_loss
             loss.backward()
             
-            # torch.nn.utils.clip_grad_norm_(local_actor_critic.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(local_actor_critic.parameters(), 40)
 
             for local_param, global_param in zip(local_actor_critic.parameters(), global_actor_critic.parameters()):
                 if global_param.grad is not None:

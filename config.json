@@ -24,9 +24,8 @@
         "num_actions":null
     },
     "actor":{
-        "type":"actor_critic_cnn",
-        "kernels":[3, 3],
-        "channels":[128, 256],
+        "type":"actor_critic_mlp",
+        "hidden_states":[256, 512],
         "num_actions":7,
         "bias":true,
         "activation":"relu"

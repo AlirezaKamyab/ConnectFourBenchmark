@@ -42,7 +42,7 @@ if __name__ == "__main__":
     actor_critic_net.share_memory()
     history = None
 
-    optimizer = SharedRMSprop(actor_critic_net.parameters(), lr=3e-4)
+    optimizer = SharedRMSprop(actor_critic_net.parameters(), lr=1e-4)
     num_workers = 12
 
     processes = []
@@ -55,9 +55,9 @@ if __name__ == "__main__":
                 actor_critic_net,
                 optimizer,
                 1.0,
-                100_000,
+                50_000,
                 10,
-                1e-2
+                0.001
             )
         )
 
