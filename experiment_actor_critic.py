@@ -3,17 +3,16 @@ import os
 from argparse import ArgumentParser
 from types import SimpleNamespace
 
-import numpy as np
 import torch
 import torch.multiprocessing as mp
 
 from environment import Connect4Env
 from utils import (
     get_model,
-    SharedAdam,
     SharedRMSprop
 )
 from actor_critic_async import worker as actor_critic
+from torch.utils.tensorboard import SummaryWriter
 
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method('spawn')
@@ -55,9 +54,10 @@ if __name__ == "__main__":
                 actor_critic_net,
                 optimizer,
                 1.0,
-                50_000,
+                100_000,
                 10,
-                0.001
+                0.001,
+                0.3
             )
         )
 
