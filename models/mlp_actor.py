@@ -94,14 +94,12 @@ class ActorCriticMLP(nn.Module):
 
             self.actor_linear.weight.data.mul_(0.01)
             self.actor_linear.bias.data.fill_(0.0)
-            self.dropout = nn.Dropout(0.1)
 
     def forward(self, x: torch.Tensor):
         batch_size = x.shape[0]
         x = x.reshape(batch_size, -1)
         for layer in self.layers:
             x = layer(x)
-        x = self.dropout(x)
         actor_output = self.actor_linear(x)
         critic_output = self.critic_linear(x)
         return actor_output, critic_output

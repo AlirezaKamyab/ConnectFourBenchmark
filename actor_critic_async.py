@@ -5,11 +5,13 @@ from environment import Connect4Env
 from models.mlp import MLP
 from models.mlp_actor import ActorMLP
 from utils import get_model, convert_to_tensor
+from torch.utils.tensorboard import SummaryWriter
 
 PLAYER_0 = 'player_0'
 PLAYER_1 = 'player_1'
 LOG_EVERY = 100
 
+logger = SummaryWriter('./logs')
 
 def worker(
     worker_id:int,
@@ -19,7 +21,8 @@ def worker(
     gamma:float,
     episodes:int,
     t_max:int=1,
-    entropy_coef:float=0.0
+    entropy_coef:float=0.0,
+    critic_coef:float=0.0
 ):
     torch.set_num_threads(1)
 
@@ -30,21 +33,9 @@ def worker(
     env.load_openning_book('connect_four_solver/7x6.book')
     wins, loses, draws = 0, 0, 0
     length = 0
+    worker_steps = 0
 
-    for episode in range(episodes):
-        # if episode == 2000:
-        #     epsilon = 0.3
-        #     env = Connect4Env(epsilon=epsilon)
-        #     env.load_openning_book('connect_four_solver/7x6.book')
-        # if episode == 4000:
-        #     epsilon = 0.2
-        #     env = Connect4Env(epsilon=epsilon)
-        #     env.load_openning_book('connect_four_solver/7x6.book')
-        # if episode == 6000:
-        #     epsilon = 0.1
-        #     env = Connect4Env(epsilon=epsilon)
-        #     env.load_openning_book('connect_four_solver/7x6.book')
-
+    for episode in range(1, episodes + 1):
         state = env.reset()
         state, action_mask = convert_to_tensor(state)
 
@@ -123,10 +114,10 @@ def worker(
 
             critic_loss = advantages.square().mean()
             actor_loss = -(advantages.detach() * log_probs).mean() - entropy_coef * entropies.mean()
-            loss = actor_loss + 0.1 * critic_loss
+            loss = actor_loss + critic_coef * critic_loss
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(local_actor_critic.parameters(), 5.0)
             
-            torch.nn.utils.clip_grad_norm_(local_actor_critic.parameters(), 40)
 
             for local_param, global_param in zip(local_actor_critic.parameters(), global_actor_critic.parameters()):
                 if global_param.grad is not None:
@@ -135,17 +126,37 @@ def worker(
                     global_param._grad = local_param.grad
 
             optimizer.step()
+            worker_steps += 1
+
+            advantage_log = advantages.detach().mean().item()
+            actor_loss_log = actor_loss.detach().mean().item()
+            critic_loss_log = critic_loss.detach().mean().item()
 
             local_actor_critic.load_state_dict(global_actor_critic.state_dict())
+
+            # Log
+            logger.add_scalar(f"worker_{worker_id}/advantage", advantage_log, global_step=worker_steps)
+            logger.add_scalars(f"worker_{worker_id}/loss", {
+                'critic_loss':critic_loss_log,
+                'actor_loss':actor_loss_log,
+                'loss': loss.detach().mean().item()
+            }, global_step=worker_steps)
+
 
         if episode % LOG_EVERY == 0:
             pi0 = [round(x, 2) for x in pi0.tolist()]
             win_rate = wins / LOG_EVERY
             lose_rate = loses / LOG_EVERY
             draw_rate = draws / LOG_EVERY
-            advantage_log = advantages.detach().mean().item()
             mean_length = length / LOG_EVERY
             length = 0
 
             wins, loses, draws = 0, 0, 0
-            print(f"worker: {worker_id} | episode {episode:>4} | length {mean_length:>3.0f} | win_rate {win_rate:.2f} | lose_rate {lose_rate:.2f} | draw_rate {draw_rate:.2f} | advantage {advantage_log:.3e} | pi_0: {str(pi0)}")
+
+            logger.add_scalars(f"worker_{worker_id}/wdl", {
+                'win_rate':win_rate,
+                'lose_rate':lose_rate,
+                'draw_rate':draw_rate
+            }, global_step=episode//LOG_EVERY)
+
+            print(f"worker: {worker_id} | episode {episode:>4} | length {mean_length:>3.0f} | win_rate {win_rate:.2f} | lose_rate {lose_rate:.2f} | draw_rate {draw_rate:.2f} | actor_loss {actor_loss_log:.3e} | critic_loss {critic_loss_log:.3e} | pi_0: {str(pi0)}")
