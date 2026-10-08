@@ -10,6 +10,8 @@ from models.cnn import CNN
 from models.cnn_actor import ActorCriticCNN
 from models.mlp import MLP
 from models.mlp_actor import ActorMLP, ActorCriticMLP
+import torch
+import torch.optim as optim
 
 
 class SharedAdam(torch.optim.Adam):
@@ -27,8 +29,6 @@ class SharedAdam(torch.optim.Adam):
                 state['exp_avg_sq'].share_memory_()
                 state['step'].share_memory_()
 
-import torch
-import torch.optim as optim
 
 class SharedRMSprop(optim.RMSprop):
     def __init__(
@@ -233,49 +233,9 @@ def get_epsilon_scheduler(config: dict):
     raise ValueError("This scheduler has not been defined")
 
 
-def save_csv_file(column_names: list, array: np.ndarray, path: str):
-    values = {column_names[i]: array[:, i] for i in range(len(column_names))}
-    df = pd.DataFrame(values)
-    df.to_csv(path, index=False)
-
-
-@torch.no_grad
-def play_a_game(
-    env: Connect4Env, model: nn.Module, device: str = "cuda"
-):
-    model.eval()
-
-    state = env.reset()
-    state, action_mask = convert_to_tensor(state, device=device)
-    frames = [env.render()]
-
-    best_moves = 0
-    total_moves = 0
-    terminated = False
-    while not terminated:
-        values = model(state)
-        action = epsilon_greedy(values=values, epsilon=0.0, action_mask=action_mask)[0]
-        if action in env.get_all_best_actions():
-            best_moves += 1
-        total_moves += 1
-
-        state, reward, terminated = env.step(action)['player_0']
-        frames.append(env.render())
-        state, action_mask = convert_to_tensor(state, device=device)
-
-        # opponent's turn
-        mini_max_action = env.predict_best_move()
-        state, reward, terminated = env.step(mini_max_action)['player_0']
-        frames.append(env.render())
-        state, action_mask = convert_to_tensor(state, device=device)
-
-    optimal_rate = best_moves / total_moves
-
-    return {
-        "mean_optimal_rate": optimal_rate,
-        "outcome": reward,
-        "frames":frames
-    }
+def change_learning_rate(optimizer:torch.optim.Optimizer, new_lr:float):
+    for param in optimizer.param_groups:
+        param['lr'] = new_lr
 
 
 @torch.no_grad()
@@ -355,8 +315,11 @@ def final_evaluation_actor(
             state, reward, terminated = env.step(action)['player_0']
             state, action_mask = convert_to_tensor(state, device=device)
 
-            state, next_reward, terminated = env.step(env.predict_best_move())['player_0']
-            state, action_mask = convert_to_tensor(state, device=device)
+            if not terminated:
+                state, next_reward, terminated = env.step(env.predict_best_move())['player_0']
+                state, action_mask = convert_to_tensor(state, device=device)
+            else:
+                next_reward = 0
 
             reward = reward + next_reward
 

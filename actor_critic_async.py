@@ -2,9 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from environment import Connect4Env
-from models.mlp import MLP
-from models.mlp_actor import ActorMLP
-from utils import get_model, convert_to_tensor
+from utils import get_model, convert_to_tensor, change_learning_rate, linear_epsilon_scheduler
 from torch.utils.tensorboard import SummaryWriter
 
 PLAYER_0 = 'player_0'
@@ -20,14 +18,16 @@ def worker(
     optimizer:torch.optim.Optimizer,
     gamma:float,
     episodes:int,
+    global_steps:torch.Tensor,
     t_max:int=1,
     entropy_coef:float=0.0,
-    critic_coef:float=0.0
+    critic_coef:float=0.0,
 ):
     torch.set_num_threads(1)
 
     local_actor_critic = get_model(config)
     local_actor_critic.load_state_dict(global_actor_critic.state_dict())
+    lr_scheduler = linear_epsilon_scheduler(1e-4, 1e-5, 10_000_000)
 
     env = Connect4Env(epsilon=0.1)
     env.load_openning_book('connect_four_solver/7x6.book')
@@ -116,7 +116,8 @@ def worker(
             actor_loss = -(advantages.detach() * log_probs).mean() - entropy_coef * entropies.mean()
             loss = actor_loss + critic_coef * critic_loss
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(local_actor_critic.parameters(), 5.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(local_actor_critic.parameters(), 40.0)
+            change_learning_rate(optimizer, lr_scheduler(global_steps))
             
 
             for local_param, global_param in zip(local_actor_critic.parameters(), global_actor_critic.parameters()):
@@ -127,6 +128,7 @@ def worker(
 
             optimizer.step()
             worker_steps += 1
+            global_steps.add_(1.0)
 
             advantage_log = advantages.detach().mean().item()
             actor_loss_log = actor_loss.detach().mean().item()
@@ -135,12 +137,14 @@ def worker(
             local_actor_critic.load_state_dict(global_actor_critic.state_dict())
 
             # Log
-            logger.add_scalar(f"worker_{worker_id}/advantage", advantage_log, global_step=worker_steps)
-            logger.add_scalars(f"worker_{worker_id}/loss", {
-                'critic_loss':critic_loss_log,
-                'actor_loss':actor_loss_log,
-                'loss': loss.detach().mean().item()
-            }, global_step=worker_steps)
+            if worker_id == 0:
+                logger.add_scalar(f"worker_{worker_id}/advantage", advantage_log, global_step=worker_steps)
+                logger.add_scalars(f"worker_{worker_id}/loss", {
+                    'critic_loss':critic_loss_log,
+                    'actor_loss':actor_loss_log,
+                    'loss': loss.detach().mean().item()
+                }, global_step=worker_steps)
+                logger.add_scalar(f'worker_{worker_id}/grad_norm', grad_norm.item(), global_step=worker_steps)
 
 
         if episode % LOG_EVERY == 0:
@@ -153,10 +157,11 @@ def worker(
 
             wins, loses, draws = 0, 0, 0
 
-            logger.add_scalars(f"worker_{worker_id}/wdl", {
-                'win_rate':win_rate,
-                'lose_rate':lose_rate,
-                'draw_rate':draw_rate
-            }, global_step=episode//LOG_EVERY)
+            if worker_id == 0:
+                logger.add_scalars(f"worker_{worker_id}/wdl", {
+                    'win_rate':win_rate,
+                    'lose_rate':lose_rate,
+                    'draw_rate':draw_rate
+                }, global_step=episode//LOG_EVERY)
 
-            print(f"worker: {worker_id} | episode {episode:>4} | length {mean_length:>3.0f} | win_rate {win_rate:.2f} | lose_rate {lose_rate:.2f} | draw_rate {draw_rate:.2f} | actor_loss {actor_loss_log:.3e} | critic_loss {critic_loss_log:.3e} | pi_0: {str(pi0)}")
+            print(f"worker: {worker_id:>2} | episode {episode:>4} | length {mean_length:>3.0f} | win_rate {win_rate:.2f} | lose_rate {lose_rate:.2f} | draw_rate {draw_rate:.2f} | actor_loss {actor_loss_log:3.3e} | critic_loss {critic_loss_log:3.3e} | lr {lr_scheduler(global_steps):3.3e} | pi_0: {str(pi0)}")
