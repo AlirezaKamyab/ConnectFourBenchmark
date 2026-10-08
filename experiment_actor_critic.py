@@ -39,6 +39,9 @@ if __name__ == "__main__":
     actor_critic_net = get_model(config.actor)
 
     actor_critic_net.share_memory()
+    global_steps = torch.tensor(0, dtype=torch.float32)
+    global_steps.share_memory_()
+
     history = None
 
     optimizer = SharedRMSprop(actor_critic_net.parameters(), lr=1e-4)
@@ -55,9 +58,10 @@ if __name__ == "__main__":
                 optimizer,
                 1.0,
                 100_000,
+                global_steps,
                 10,
                 0.001,
-                0.3
+                0.2,
             )
         )
 
