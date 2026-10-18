@@ -20,8 +20,8 @@ def env_worker(remote, parent_remote, worker_id, epsilon=0.1, device='cpu'):
                 state, action_mask = convert_to_tensor(obs, device=device)
 
                 if not terminated:
-                    obs, next_reward, terminated = env.step(env.predict_best_move())
-                    state, action_mask = convert_to_tensor(state, device=device)
+                    obs, next_reward, terminated = env.step(env.predict_best_move())[PLAYER_0]
+                    state, action_mask = convert_to_tensor(obs, device=device)
                 else:
                     next_reward = 0
 
